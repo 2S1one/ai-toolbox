@@ -1,0 +1,13 @@
+fastapi
+pydantic-settings
+python-telegram-bot
+uvicorn
+pymongo
+qdrant-client
+fastembed
+feedparser
+requests
+langchain
+langchain-ollama
+langchain-openai
+langchain-text-splitters
