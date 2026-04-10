@@ -33,7 +33,13 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str | None = None
     telegram_allowed_usernames: list[str] = []
-    notification_topics: list[str] = []
+    notification_topics: list[str] = [
+        (
+            "Cloud infrastructure security: misconfiguration findings, IAM privilege escalation, "
+            "S3 bucket exposure, publicly exposed services, attack techniques against AWS/GCP/Azure. "
+            "NOT about: general DevOps, cost optimization, cloud architecture without security angle."
+        ),
+    ]
 
     # Reddit RSS
     subreddits: list[str] = [
