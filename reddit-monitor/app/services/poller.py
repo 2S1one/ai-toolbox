@@ -15,6 +15,27 @@ from app.services.notifier import check_and_notify
 
 log = logging.getLogger(__name__)
 
+# Pool of realistic user agents to rotate between
+USER_AGENTS = [
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+]
+
+def _get_request_headers() -> dict:
+    """Get request headers with randomized user agent"""
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
+
 
 def _clean_html(raw: str) -> str:
     text = re.sub(r"<[^>]+>", "", raw)
@@ -53,24 +74,42 @@ def poll_once(collection, qdrant, seen: set):
     new_docs = []
     for subreddit in settings.subreddits:
         url = f"https://www.reddit.com/r/{subreddit}/new/.rss"
-        feed = feedparser.parse(url)
-
-        for entry in feed.entries:
-            reddit_url = entry.get("link", "")
-            if not reddit_url or reddit_url in seen:
+        
+        try:
+            headers = _get_request_headers()
+            feed = feedparser.parse(url, request_headers=headers)
+            
+            # Check for HTTP errors
+            if hasattr(feed, 'status') and feed.status >= 400:
+                log.warning("HTTP %d for subreddit %s: %s", feed.status, subreddit, url)
+                if feed.status == 403:
+                    log.warning("Access forbidden for r/%s - may need to adjust headers or rate limiting", subreddit)
                 continue
-            seen.add(reddit_url)
-
-            post = _parse_entry(entry, subreddit)
-            doc = post.model_dump()
-            try:
-                collection.insert_one(doc)
-            except DuplicateKeyError:
+            
+            if not feed.entries:
+                log.warning("No entries found for subreddit %s", subreddit)
                 continue
 
-            log.info("[%s] %s", subreddit, post.title)
-            index_doc(doc, qdrant, collection)
-            new_docs.append(doc)
+            for entry in feed.entries:
+                reddit_url = entry.get("link", "")
+                if not reddit_url or reddit_url in seen:
+                    continue
+                seen.add(reddit_url)
+
+                post = _parse_entry(entry, subreddit)
+                doc = post.model_dump()
+                try:
+                    collection.insert_one(doc)
+                except DuplicateKeyError:
+                    continue
+
+                log.info("[%s] %s", subreddit, post.title)
+                index_doc(doc, qdrant, collection)
+                new_docs.append(doc)
+                
+        except Exception as e:
+            log.error("Failed to fetch subreddit r/%s: %s", subreddit, e)
+            continue
 
         time.sleep(random.uniform(*DELAY_BETWEEN_REQUESTS))
 
